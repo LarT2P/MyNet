@@ -11,8 +11,9 @@ os.environ['CUDA_VISIBLE_DEVICE'] = '1'
 class SeNet(object):
   def __init__(self, resname, is_training, keep_prob=0.5, num_classes=10):
     super(SeNet, self).__init__()
-    self.sename = sename
+    self.resname = resname
     self.num_classes = num_classes
+    self.r = 16
 
     # self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
     # self.initializer = tf.contrib.layers.xavier_initializer()
@@ -32,7 +33,7 @@ class SeNet(object):
 
     block_sizes = cfg.net_layers[self.resname]
     for bs in block_sizes:
-      out = self.SeNet_block(out, block_size=bs[0], num_repeated=bs[1])
+      out = self.senet_block(out)
 
     # 这里的输出是8x8的
     out = tf.layers.average_pooling2d(out, pool_size=8, strides=1)
@@ -96,6 +97,7 @@ class SeNet(object):
 
   def senet_block(self, inputs):
     short_cut_se = tf.identity(inputs)
+    out_channel = short_cut_se.shape[-1]
 
     inputs_height, inputs_width = inputs.shape[1:3]
     inputs = tf.layers.average_pooling2d(
@@ -105,18 +107,19 @@ class SeNet(object):
 
     inputs = tf.layers.flatten(inputs)
     inputs = tf.layers.dense(
-      inputs, units=self.num_classes,
+      inputs, units=out_channel // self.r,
       activation='relu',
       kernel_initializer=self.initializer,
       kernel_regularizer=self.regularizer
     )
     inputs = tf.layers.dense(
-      inputs, units=self.num_classes,
+      inputs, units=out_channel,
       activation='sigmoid',
       kernel_initializer=self.initializer,
       kernel_regularizer=self.regularizer
     )
-    inputs = tf.expand_dims(inputs, [1, 2])
+    inputs = tf.expand_dims(inputs, axis=1)
+    inputs = tf.expand_dims(inputs, axis=2)
 
     return tf.multiply(short_cut_se, inputs)
 
@@ -170,7 +173,8 @@ class Solver(object):
 
     # eval() 函数用来执行一个字符串表达式，并返回表达式的值。这里是执行网络
     self.net = eval(self.netname)(
-      is_training=self.is_training, keep_prob=self.keep_prob)
+      is_training=self.is_training, keep_prob=self.keep_prob
+    )
 
     # 前向计算网络
     self.predicts, self.softmax_out = self.net.forward(self.images)
@@ -395,8 +399,26 @@ class CifarData(object):
 
 
 # 网络入口 ######################################################################
-def SeNet20(is_training=True, keep_prob=0.5):
+def SE_Resnet20(is_training=True, keep_prob=0.5):
   net = SeNet(resname='ResNet20', is_training=is_training,
+              keep_prob=keep_prob)
+  return net
+
+
+def SE_Resnet32(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet32', is_training=is_training,
+              keep_prob=keep_prob)
+  return net
+
+
+def SE_Resnet44(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet44', is_training=is_training,
+              keep_prob=keep_prob)
+  return net
+
+
+def SE_Resnet56(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet56', is_training=is_training,
               keep_prob=keep_prob)
   return net
 

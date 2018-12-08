@@ -13,10 +13,10 @@ class SqueezeNet(object):
     super(SqueezeNet, self).__init__()
     self.squeezename = squeezename
     self.num_classes = num_classes
-    self.short_cut = cfg.net_layers[squeezename]
+    self.short_cut_list = cfg.net_layers[squeezename]
     self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
     self.initializer = tf.contrib.layers.xavier_initializer()
-
+    self.model = squeezename[-1]
     self.is_training = is_training
     self.keep_prob = keep_prob
 
@@ -29,8 +29,16 @@ class SqueezeNet(object):
       out = tf.layers.average_pooling2d(
         out, pool_size=3, strides=2, name='maxpool1'
       )
-      # 这里要考虑特定结构存在的差异性, 所以独立出来构造函数
-      out = self.make_layers(inputs)
+
+      if self.model == 'A':
+        out = self.make_layers_A(inputs)
+      elif self.model == 'B':
+        out = self.make_layers_B(inputs)
+      elif self.model == 'C':
+        out = self.make_layers_C(inputs)
+      else:
+        raise Exception('请使用现有的模型...')
+
       out = self.conv2d(
         inputs=inputs, out_channel=1000, kernel_size=1, strides=1, name='conv10'
       )
@@ -49,48 +57,75 @@ class SqueezeNet(object):
       return predicts, softmax_out
 
   def conv2d(
-      self, inputs, out_channel, kernel_size=3, strides=1, name='_', relu=True
+      self, inputs, out_channel, kernel_size=3, strides=1, name=None, relu=True
   ):
     with tf.name_scope(name):
       inputs = tf.layers.conv2d(
         inputs, filters=out_channel, kernel_size=kernel_size, strides=strides,
         padding='same', kernel_initializer=self.initializer,
-        kernel_regularizer=self.regularizer, name='conv'
+        kernel_regularizer=self.regularizer
       )
       inputs = tf.layers.batch_normalization(
-        inputs, training=self.is_training, name='BN'
+        inputs, training=self.is_training
       )
       inputs = tf.nn.relu(inputs) if relu else inputs
       return inputs
 
-  def make_short_cut(self, inputs):
-    pass
+  def make_layers_A(self, inputs):
+    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
+    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
 
-  def make_layers(self, inputs):
-    # inputs = self.make_short_cut(inputs)
-    inputs = self.fire_block(inputs, [16, 64, 64], name='fire2')
-    inputs = self.fire_block(inputs, [16, 64, 64], name='fire3')
-    inputs = self.fire_block(inputs, [32, 128, 128], name='fire4')
-    inputs = tf.layers.max_pooling2d(
-      inputs, 3, 2, padding='same', name='maxpool4'
-    )
-    inputs = self.fire_block(inputs, [32, 128, 128], name='fire5')
-    inputs = self.fire_block(inputs, [48, 192, 192], name='fire6')
-    inputs = self.fire_block(inputs, [48, 192, 192], name='fire7')
-    inputs = self.fire_block(inputs, [64, 256, 256], name='fire8')
-    inputs = tf.layers.max_pooling2d(
-      inputs, 3, 2, padding='same', name='maxpool8'
-    )
-
-    if self.model == 'B':
-      short_cut_maxpool8 = tf.identity(inputs)
-    inputs = self.fire_block(inputs, [64, 256, 256], name='fire9')
-    if self.model == 'B':
-      inputs = tf.add(inputs, short_cut_maxpool8)
+    for i in range(2, 9):
+      inputs = self.fire_block(
+        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
+      )
+      if i == 4 or i == 8:
+        inputs = tf.layers.max_pooling2d(
+          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
+        )
 
     return inputs
 
-  def fire_block(self, inputs, block_size, name='_'):
+  def make_layers_B(self, inputs):
+    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
+    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
+
+    for i in range(2, 9):
+      if i - 1 in self.short_cut_list:
+        short_cut = tf.identity(inputs)
+      inputs = self.fire_block(
+        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
+      )
+      if i - 1 in self.short_cut_list:
+        inputs = tf.add(inputs, short_cut)
+
+      if i == 4 or i == 8:
+        inputs = tf.layers.max_pooling2d(
+          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
+        )
+    return inputs
+
+  def make_layers_C(self, inputs):
+    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
+    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
+
+    for i in range(2, 9):
+      if i - 1 in self.short_cut_list:
+        short_cut = tf.identity(inputs)
+      inputs = self.fire_block(
+        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
+      )
+      if i - 1 in self.short_cut_list:
+        inputs = tf.add(inputs, short_cut)
+
+      if i == 4 or i == 8:
+        inputs = tf.layers.max_pooling2d(
+          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
+        )
+
+    return inputs
+
+  def fire_block(self, inputs, block_size, name=None):
     with tf.name_scope(name):
       s1, e1, s3 = block_size
       inputs = self.conv2d(inputs, s1, 1, 1, name='s1', relu=True)

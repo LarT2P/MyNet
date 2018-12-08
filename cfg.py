@@ -4,10 +4,10 @@ dataset_params = {
 }
 
 common_params = {
-  'net_name'     : 'DenseNet40_12',
+  'net_name'     : 'SqueezeNetA',
   'batch_size'   : 128,
   'image_size'   : (32, 32),
-  'learning_rate': 0.01,
+  'learning_rate': 0.1,
   'moment'       : 0.9,
   'display_step' : 100,
   'num_epochs'   : 300
@@ -28,7 +28,7 @@ net_style = ['vgg11', 'vgg13', 'vgg16', 'vgg19',
              'DenseNetBC100_12', 'DenseNetBC250_24', 'DenseNetBC190_40',
              'ResNext50', 'ResNext101',
              'SqueezeNetA', 'SqueezeNetB', 'SqueezeNetC',
-             'SE_Resnet_20', 'SE_Resnet_50', 'SE_Resnet_101']
+             'SE_Resnet20', 'SE_Resnet32', 'SE_Resnet44', 'SE_Resnet56']
 
 HEIGHT = 32
 WIDTH = 32
@@ -100,9 +100,6 @@ net_layers = {
   'DenseNetBC250_24': [250, 24],
   'DenseNetBC190_40': [190, 40],
   'SqueezeNetA'     : [],
-  'SqueezeNetB'     : ['fire2', 'maxpool4', 'fire6', 'moxpool8'],
-  'SqueezeNetC'     : [
-    'maxpool1', 'fire2', 'fire3', 'maxpool4', 'fire5', 'fire6',
-    'fire7', 'moxpool8'
-  ]
+  'SqueezeNetB'     : [2, 4, 6, 8],
+  'SqueezeNetC'     : [1, 2, 3, 4, 5, 6, 7, 8],
 }

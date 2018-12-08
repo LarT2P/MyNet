@@ -7,7 +7,7 @@ import os
 import tensorflow as tf
 
 import cfg
-from net_train import CifarData
+from train_densenet import CifarData
 
 
 def input_fn_test(dataset_params):

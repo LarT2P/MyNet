@@ -78,6 +78,10 @@
     global avepooling
     dense, softmax
     ```
+    * train_acc: 0.9894
+    * test_acc_from_testdataset: 0.9176
+    * evel_acc_from_alldataset: 0.9177
+    
     * 'net_name': 'DenseNet40_12'
     * 'batch_size': 64
     * 'image_size': (32, 32)
@@ -85,14 +89,24 @@
     * 'moment': 0.9
     * 'display_step': 100
     * 'num_epochs': 500
-    
+       
 * senet
     
     * 论文(error)
         
         * resnet-110-se: 5.21
         * resnet-164-se: 4.39
-        
+    
+    * 'net_name'     : 'SE_Resnet20',
+    * 'batch_size'   : 128,
+    * 'image_size'   : (32, 32),
+    * 'learning_rate': 0.01,
+    * 'moment'       : 0.9,
+    * 'display_step' : 100,
+    * 'num_epochs'   : 300   
+    
+    
+      
 ---
 
 DneseNet在训练时十分消耗内存，这是由于算法实现不优带来的。当前的深度学习框架对 DenseNet 的密集连接没有很好的支持，所以只能借助于反复的拼接（Concatenation）操作，将之前层的输出与当前层的输出拼接在一起，然后传给下一层。对于大多数框架（如Torch和TensorFlow），每次拼接操作都会开辟新的内存来保存拼接后的特征。这样就导致一个 L 层的网络，要消耗相当于 L(L+1)/2 层网络的内存（第 l 层的输出在内存里被存了 (L-l+1) 份）。
