@@ -3,8 +3,10 @@ import os
 import tensorflow as tf
 
 import cfg
+import math
+import sys
 
-os.environ['CUDA_VISIBLE_DEVICE'] = '1'
+os.environ['CUDA_VISIBLE_DEVICE'] = '0'
 
 
 # 构造网络 ######################################################################
@@ -156,6 +158,7 @@ class Solver(object):
     self.batch_size = common_params['batch_size']
     self.height, self.width = common_params['image_size']
     self.display_step = common_params['display_step']
+    self.predict_step = common_params['predict_step']
 
     self.netname = common_params['net_name']
     model_dir = os.path.join(dataset_params['model_path'], self.netname, 'ckpt')
@@ -218,9 +221,9 @@ class Solver(object):
     """
     训练
     """
-    train_iterator = self.dataset['train'].make_one_shot_iterator()
+    train_iterator = self.dataset['train'].make_initializable_iterator()
     train_dataset = train_iterator.get_next()
-    test_iterator = self.dataset['test'].make_one_shot_iterator()
+    test_iterator = self.dataset['test'].make_initializable_iterator()
     test_dataset = test_iterator.get_next()
 
     var_list = tf.trainable_variables()
@@ -238,16 +241,22 @@ class Solver(object):
     summary_op = tf.summary.merge_all()
 
     with tf.Session(config=config) as sess:
+      test_steps = (10000 // cfg.common_params['batch_size']) + 1
+      train_steps = (50000
+                     * cfg.common_params['num_epochs']
+                     // cfg.common_params['batch_size']
+                     + 1)
+
       # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
       sess.run(init)
       summary_writer = tf.summary.FileWriter(self.log_dir, sess.graph)
+      sess.run(train_iterator.initializer)
 
-      step = 0
       acc_count = 0
       total_accuracy = 0
       try:
         # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
-        while True:
+        for step in range(train_steps):
           # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
           images, labels = sess.run(train_dataset)
           sess.run(self.train_op, feed_dict={self.images     : images,
@@ -274,39 +283,39 @@ class Solver(object):
             print('Iter step:%d learning rate:%.4f loss:%.4f accuracy:%.4f' %
                   (step, lr, loss, total_accuracy / acc_count))
 
+          if step % self.predict_step == 0:
+            # 总体计算测试准确率
+            sess.run(test_iterator.initializer)
+
+            test_acc_count = 0
+            test_total_accuracy = 0
+            try:
+              for test_step in range(test_steps):
+                summary_str = sess.run(summary_op,
+                                       feed_dict={self.images     : images,
+                                                  self.labels     : labels,
+                                                  self.is_training: True,
+                                                  self.keep_prob  : 0.5})
+                summary_writer.add_summary(summary_str, test_step)
+                # 获取测试集
+                test_images, test_labels = sess.run(test_dataset)
+                test_acc = sess.run(self.accuracy,
+                                    feed_dict={self.images     : test_images,
+                                               self.labels     : test_labels,
+                                               self.is_training: False,
+                                               self.keep_prob  : 1.0})
+                test_total_accuracy += test_acc
+                test_acc_count += 1
+
+            except tf.errors.OutOfRangeError:
+              print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
+              print('finish testing until the step!')
+
           # 5000步保存下结果
           if step % 5000 == 0:
             saver.save(sess, self.model_name, global_step=step)
-          step += 1
       except tf.errors.OutOfRangeError:
         print("finish training !")
-
-      # 总体计算测试准确率
-
-      test_step = 0
-      test_acc_count = 0
-      test_total_accuracy = 0
-      try:
-        while True:
-          summary_str = sess.run(summary_op,
-                                 feed_dict={self.images     : images,
-                                            self.labels     : labels,
-                                            self.is_training: True,
-                                            self.keep_prob  : 0.5})
-          summary_writer.add_summary(summary_str, test_step)
-          # 获取测试集
-          test_images, test_labels = sess.run(test_dataset)
-          test_acc = sess.run(self.accuracy,
-                              feed_dict={self.images     : test_images,
-                                         self.labels     : test_labels,
-                                         self.is_training: False,
-                                         self.keep_prob  : 1.0})
-          test_total_accuracy += test_acc
-          test_acc_count += 1
-          test_step += 1
-      except tf.errors.OutOfRangeError:
-        print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
-        print('finish testing !')
 
 
 # 获取数据并处理 #################################################################
@@ -375,19 +384,24 @@ class CifarData(object):
 
     # is_training = True 返回训练集名字, False 返回测试集名字
     filenames = self.get_filenames(is_training, data_dir)
+
     # 这个函数的输入是一个文件的列表和一个record_bytes，之后dataset的每一个元素就是文件中固
     # 定字节数record_bytes的内容。通常用来读取以二进制形式保存的文件，CIFAR10数据集就是这种
     # 形式这里每条记录中的字节数是图像大小加上一比特
     dataset = tf.data.FixedLengthRecordDataset(filenames, cfg.RECORD_BYTES)
+
     # 每次执行一次, 都要从数据里去拿出batchsize大小的数据
+    # 这样操作能确保下个批次始终对 GPU 可用，减少 GPU 的闲置时间。Buffer_size 是 GPU
+    # 预读取的批次数量。
     dataset = dataset.prefetch(buffer_size=batch_size)
+
     # 训练的时候, 对于拿出来的batchsize的数据进行混淆
     if is_training:
       # 随机混淆数据后抽取buffer_size大小的数据
       dataset = dataset.shuffle(buffer_size=cfg.NUM_IMAGES['train'])
+      # 只是重复训练数据集, 重复周期次, 这么多周期都用使用相同的数据
+      dataset = dataset.repeat(num_epochs)
 
-    # 将数据集重复周期次, 这么多周期都用使用相同的数据
-    dataset = dataset.repeat(num_epochs)
     # 把转换函数应用到数据集上
     # map映射函数, 并使用batch操作进行批提取
     dataset = dataset.apply(tf.contrib.data.map_and_batch(

@@ -4,13 +4,14 @@ dataset_params = {
 }
 
 common_params = {
-  'net_name'     : 'SqueezeNetA',
+  'net_name'     : 'SE_Resnet_20',
   'batch_size'   : 128,
   'image_size'   : (32, 32),
-  'learning_rate': 0.1,
+  'learning_rate': 0.01,
   'moment'       : 0.9,
   'display_step' : 100,
-  'num_epochs'   : 300
+  'num_epochs'   : 300,
+  'predict_step' : 500
 }
 
 graph_node = {
@@ -28,7 +29,7 @@ net_style = ['vgg11', 'vgg13', 'vgg16', 'vgg19',
              'DenseNetBC100_12', 'DenseNetBC250_24', 'DenseNetBC190_40',
              'ResNext50', 'ResNext101',
              'SqueezeNetA', 'SqueezeNetB', 'SqueezeNetC',
-             'SE_Resnet20', 'SE_Resnet32', 'SE_Resnet44', 'SE_Resnet56']
+             'SE_Resnet_20', 'SE_Resnet_32', 'SE_Resnet_44', 'SE_Resnet_56']
 
 HEIGHT = 32
 WIDTH = 32

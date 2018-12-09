@@ -33,7 +33,7 @@ class SeNet(object):
 
     block_sizes = cfg.net_layers[self.resname]
     for bs in block_sizes:
-      out = self.senet_block(out)
+      out = self.resnet_block(out, block_size=bs[0], num_repeated=bs[1])
 
     # 这里的输出是8x8的
     out = tf.layers.average_pooling2d(out, pool_size=8, strides=1)
@@ -375,9 +375,9 @@ class CifarData(object):
     if is_training:
       # 随机混淆数据后抽取buffer_size大小的数据
       dataset = dataset.shuffle(buffer_size=cfg.NUM_IMAGES['train'])
+      # 将数据集重复周期次, 这么多周期都用使用相同的数据
+      dataset = dataset.repeat(num_epochs)
 
-    # 将数据集重复周期次, 这么多周期都用使用相同的数据
-    dataset = dataset.repeat(num_epochs)
     # 把转换函数应用到数据集上
     # map映射函数, 并使用batch操作进行批提取
     dataset = dataset.apply(tf.contrib.data.map_and_batch(
@@ -399,25 +399,25 @@ class CifarData(object):
 
 
 # 网络入口 ######################################################################
-def SE_Resnet20(is_training=True, keep_prob=0.5):
+def SE_Resnet_20(is_training=True, keep_prob=0.5):
   net = SeNet(resname='ResNet20', is_training=is_training,
               keep_prob=keep_prob)
   return net
 
 
-def SE_Resnet32(is_training=True, keep_prob=0.5):
+def SE_Resnet_32(is_training=True, keep_prob=0.5):
   net = SeNet(resname='ResNet32', is_training=is_training,
               keep_prob=keep_prob)
   return net
 
 
-def SE_Resnet44(is_training=True, keep_prob=0.5):
+def SE_Resnet_44(is_training=True, keep_prob=0.5):
   net = SeNet(resname='ResNet44', is_training=is_training,
               keep_prob=keep_prob)
   return net
 
 
-def SE_Resnet56(is_training=True, keep_prob=0.5):
+def SE_Resnet_56(is_training=True, keep_prob=0.5):
   net = SeNet(resname='ResNet56', is_training=is_training,
               keep_prob=keep_prob)
   return net

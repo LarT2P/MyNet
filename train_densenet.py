@@ -55,66 +55,61 @@ class DenseNet(object):
 
     return predicts, softmax_out
 
-
-def conv2d(self, inputs, out_channel, kernel_size=3, strides=1):
-  """
-  Conv-BN-ReLU
-  """
-  inputs = tf.layers.conv2d(
-    inputs, filters=out_channel, kernel_size=kernel_size,
-    strides=strides, padding='same',
-    kernel_initializer=self.initializer,
-    kernel_regularizer=self.regularizer
-  )
-  return inputs
-
-
-def dense_conv2d(self, inputs, out_channel, kernel_size=3, strides=1):
-  inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
-  inputs = tf.nn.relu(inputs)
-  if self.base:
-    inputs = self.conv2d(inputs, out_channel, kernel_size, strides)
-  else:
-    inputs = self.conv2d(inputs, out_channel, kernel_size=1, strides=1)
-    inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
-    inputs = tf.nn.relu(out)
-    inputs = self.conv2d(inputs, out_channel, kernel_size, strides)
-  return inputs
-
-
-def dense_block(self, inputs):
-  # 对于从支路的角度来看, 实际上就是支路逐渐变宽的过程
-  # 分析可见https://github.com/lartpang/ML_markdown/issues/24
-  internel_out = tf.identity(inputs)
-  for i in range(self.per_block_num):
-    # 对于卷积而言, 输入的就是卷叠加后的输出
-    inputs = self.dense_conv2d(
-      internel_out, out_channel=self.k, kernel_size=3
+  def conv2d(self, inputs, out_channel, kernel_size=3, strides=1):
+    """
+    Conv-BN-ReLU
+    """
+    inputs = tf.layers.conv2d(
+      inputs, filters=out_channel, kernel_size=kernel_size,
+      strides=strides, padding='same',
+      kernel_initializer=self.initializer,
+      kernel_regularizer=self.regularizer
     )
-    # 对于叠加而言, 就是卷积后的输出和快速通道的拼接
-    internel_out = tf.concat((inputs, internel_out), axis=-1)
-  return internel_out
+    return inputs
 
-  return inputs
+  def dense_conv2d(self, inputs, out_channel, kernel_size=3, strides=1):
+    inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
+    inputs = tf.nn.relu(inputs)
+    if self.base:
+      inputs = self.conv2d(inputs, out_channel, kernel_size, strides)
+    else:
+      inputs = self.conv2d(inputs, out_channel, kernel_size=1, strides=1)
+      inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
+      inputs = tf.nn.relu(out)
+      inputs = self.conv2d(inputs, out_channel, kernel_size, strides)
+    return inputs
 
+  def dense_block(self, inputs):
+    # 对于从支路的角度来看, 实际上就是支路逐渐变宽的过程
+    # 分析可见https://github.com/lartpang/ML_markdown/issues/24
+    internel_out = tf.identity(inputs)
+    for i in range(self.per_block_num):
+      # 对于卷积而言, 输入的就是卷叠加后的输出
+      inputs = self.dense_conv2d(
+        internel_out, out_channel=self.k, kernel_size=3
+      )
+      # 对于叠加而言, 就是卷积后的输出和快速通道的拼接
+      internel_out = tf.concat((inputs, internel_out), axis=-1)
+    return internel_out
 
-def transition_layer(self, inputs):
-  out_channel = inputs.shape[-1] if self.base else inputs.shape[-1] // 2
-  inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
-  inputs = tf.nn.relu(inputs)
-  inputs = self.conv2d(inputs, out_channel, 1, 1)
-  inputs = tf.layers.max_pooling2d(
-    inputs, pool_size=2, strides=2, padding='same'
-  )
-  return inputs
+    return inputs
 
+  def transition_layer(self, inputs):
+    out_channel = inputs.shape[-1] if self.base else inputs.shape[-1] // 2
+    inputs = tf.layers.batch_normalization(inputs, training=self.is_training)
+    inputs = tf.nn.relu(inputs)
+    inputs = self.conv2d(inputs, out_channel, 1, 1)
+    inputs = tf.layers.max_pooling2d(
+      inputs, pool_size=2, strides=2, padding='same'
+    )
+    return inputs
 
-def loss(self, predicts, labels):
-  losses = tf.reduce_mean(
-    tf.losses.sparse_softmax_cross_entropy(labels, predicts))
-  l2_reg = tf.losses.get_regularization_losses()
-  losses += tf.add_n(l2_reg)
-  return losses
+  def loss(self, predicts, labels):
+    losses = tf.reduce_mean(
+      tf.losses.sparse_softmax_cross_entropy(labels, predicts))
+    l2_reg = tf.losses.get_regularization_losses()
+    losses += tf.add_n(l2_reg)
+    return losses
 
 
 # 构造处理类 #####################################################################
@@ -359,9 +354,9 @@ class CifarData(object):
     if is_training:
       # 随机混淆数据后抽取buffer_size大小的数据
       dataset = dataset.shuffle(buffer_size=cfg.NUM_IMAGES['train'])
+      # 将数据集重复周期次, 这么多周期都用使用相同的数据
+      dataset = dataset.repeat(num_epochs)
 
-    # 将数据集重复周期次, 这么多周期都用使用相同的数据
-    dataset = dataset.repeat(num_epochs)
     # 把转换函数应用到数据集上
     # map映射函数, 并使用batch操作进行批提取
     dataset = dataset.apply(tf.contrib.data.map_and_batch(

@@ -96,7 +96,10 @@
         
         * resnet-110-se: 5.21
         * resnet-164-se: 4.39
-    
+        
+    * train_acc: 0.9588
+    * test_acc_from_testdataset: 0.9011
+    * evel_acc_from_alldataset: 0.9015
     * 'net_name'     : 'SE_Resnet20',
     * 'batch_size'   : 128,
     * 'image_size'   : (32, 32),

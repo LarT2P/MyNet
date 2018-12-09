@@ -307,9 +307,8 @@ class CifarData(object):
     if is_training:
       # 随机混淆数据后抽取buffer_size大小的数据
       dataset = dataset.shuffle(buffer_size=cfg.NUM_IMAGES['train'])
-
-    # 将数据集重复周期次, 这么多周期都用使用相同的数据
-    dataset = dataset.repeat(num_epochs)
+      # 将数据集重复周期次, 这么多周期都用使用相同的数据
+      dataset = dataset.repeat(num_epochs)
     # 把转换函数应用到数据集上
     # map映射函数, 并使用batch操作进行批提取
     dataset = dataset.apply(tf.contrib.data.map_and_batch(
