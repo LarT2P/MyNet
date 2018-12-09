@@ -5,12 +5,12 @@ dataset_params = {
 
 common_params = {
   'net_name'     : 'SqueezeNetA',
-  'batch_size'   : 128,
+  'batch_size'   : 64,
   'image_size'   : (32, 32),
   'learning_rate': 0.01,
   'moment'       : 0.9,
   'display_step' : 100,
-  'num_epochs'   : 300,
+  'num_epochs'   : 200,
   'predict_step' : 500
 }
 

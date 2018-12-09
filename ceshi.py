@@ -9,165 +9,125 @@ os.environ['CUDA_VISIBLE_DEVICE'] = '0'
 
 
 # 构造网络 ######################################################################
-class SqueezeNet(object):
-  def __init__(self, squeezename, is_training, keep_prob=0.5, num_classes=10):
-    super(SqueezeNet, self).__init__()
-    self.squeezename = squeezename
+class SeNet(object):
+  def __init__(self, resname, is_training, keep_prob=0.5, num_classes=10):
+    super(SeNet, self).__init__()
+    self.resname = resname
     self.num_classes = num_classes
-    self.short_cut_list = cfg.net_layers[squeezename]
+    self.r = 16
+
     # self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
+    # self.initializer = tf.contrib.layers.xavier_initializer()
+    self.weight_decay = 1e-4
+    self.regularizer = tf.contrib.layers.l2_regularizer(scale=self.weight_decay)
     self.initializer = tf.contrib.layers.xavier_initializer()
-    self.model = squeezename[-1]
+
     self.is_training = is_training
     self.keep_prob = keep_prob
-    self.conv_num = 1
-
-    # *******************************
-    self.sr = 0.5
-    self.base = 128
-    self.incre = 128
-    self.pct33 = 0.5
-    self.freq = 2
 
   def forward(self, inputs):
-    height, width = inputs.shape[1:3]
-    out = self.conv2d(
-      inputs=inputs, out_channel=96, kernel_size=7, strides=2
-    )
-    out = tf.layers.max_pooling2d(
-      out, pool_size=3, strides=2, padding='same', name='maxpool1'
-    )
+    """
+    SeNetforcifar见下
+    """
+    # conv1
+    out = self.conv2d(inputs=inputs, out_channel=16, kernel_size=3, strides=1)
 
-    if self.model == 'A':
-      out = self.make_layers_A(out)
-    elif self.model == 'B':
-      out = self.make_layers_B(out)
-    elif self.model == 'C':
-      out = self.make_layers_C(out)
-    else:
-      raise Exception('请使用现有的模型...')
+    block_sizes = cfg.net_layers[self.resname]
+    for bs in block_sizes:
+      out = self.resnet_block(out, block_size=bs[0], num_repeated=bs[1])
 
-    out = self.conv2d(
-      inputs=out, out_channel=1000, kernel_size=1, strides=1
-    )
-    # 缩放为/16
-    pool_height, pool_width = height // 16, width // 16
-    out = tf.layers.average_pooling2d(
-      out, pool_size=(pool_height, pool_width),
-      strides=(pool_height, pool_width), name='avepool10'
-    )
+    # 这里的输出是8x8的
+    out = tf.layers.average_pooling2d(out, pool_size=8, strides=1)
     out = tf.layers.flatten(out, name='flatten')
-    out = tf.layers.dropout(out, rate=self.keep_prob, name='dropout')
     predicts = tf.layers.dense(
       out, units=self.num_classes, kernel_initializer=self.initializer,
-      name='fc'
+      kernel_regularizer=self.regularizer
     )
     softmax_out = tf.nn.softmax(predicts, name='output')
     return predicts, softmax_out
 
-  def conv2d(
-      self, inputs, out_channel, kernel_size=3, strides=1, relu=True
-  ):
+  def conv2d(self, inputs, out_channel, kernel_size=3, strides=1, relu=True):
     inputs = tf.layers.conv2d(
       inputs, filters=out_channel, kernel_size=kernel_size, strides=strides,
       padding='same', kernel_initializer=self.initializer,
-      name='conv_' + str(self.conv_num))
-    self.conv_num += 1
-
-    # inputs = tf.layers.batch_normalization(
-    #   inputs, training=self.is_training
-    # )
+      kernel_regularizer=self.regularizer
+    )
+    inputs = tf.layers.batch_normalization(
+      inputs, training=self.is_training
+    )
     inputs = tf.nn.relu(inputs) if relu else inputs
     return inputs
 
-  def make_layers_A(self, inputs):
-    # s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    # e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-    # for i in range(2, 9):
-    #   inputs = self.fire_block(
-    #     inputs, [s1[i - 2], e1[i - 2], e1[i - 1]]
-    #   )
-    #   if i == 4 or i == 8:
-    #     inputs = tf.layers.max_pooling2d(
-    #       inputs, 3, 2, padding='same'
-    #     )
-    # return inputs
-    max_pool_loc = [4, 8]
-    pool_num = 1
-    for i in range(2, 10):
-      # 这里的括号不可以去掉, 属于一个向下取整, 也就是说out_channel=[128, 128, 128*2,
-      # 128*2, 128*3, 128*3, 128*4, 128*4]
-      out_channel = self.base + self.incre * ((i - 2) // self.freq)
-      inputs = self.fire_block(inputs, out_channel)
-      if i in max_pool_loc:
-        inputs = tf.layers.max_pooling2d(
-          inputs, pool_size=3, strides=2, padding='same',
-          name='maxpool_' + str(pool_num))
-        pool_num += 1
-    return inputs
+  def resnet_block(self, inputs, block_size, num_repeated):
+    """
+    完成卷积, 池化的搭建
+    完成跳跃链接的搭建, 不同的路线最后是相加的处理
+    """
+    # 重复残差块
+    for index_repeated in range(num_repeated):
+      # 开始一个分支
+      short_cut = tf.identity(inputs)
+      input_channel = short_cut.shape[-1]
+      input_width = short_cut.shape[-2]
 
-  def make_layers_B(self, inputs):
-    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-
-    for i in range(2, 9):
-      if i - 1 in self.short_cut_list:
-        short_cut = tf.identity(inputs)
-      inputs = self.fire_block(
-        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
-      )
-      if i - 1 in self.short_cut_list:
-        inputs = tf.add(inputs, short_cut)
-
-      if i == 4 or i == 8:
-        inputs = tf.layers.max_pooling2d(
-          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
-        )
-    return inputs
-
-  def make_layers_C(self, inputs):
-    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-
-    for i in range(2, 9):
-      if i - 1 in self.short_cut_list:
-        short_cut = tf.identity(inputs)
-      inputs = self.fire_block(
-        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
-      )
-      if i - 1 in self.short_cut_list:
-        inputs = tf.add(inputs, short_cut)
-
-      if i == 4 or i == 8:
-        inputs = tf.layers.max_pooling2d(
-          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
+      # 重复残差块内的卷积
+      for param in block_size:
+        inputs = self.conv2d(
+          inputs, out_channel=param[1], kernel_size=param[0], strides=param[2],
+          relu=bool(param[3])
         )
 
-    return inputs
+      inputs = self.senet_block(inputs)
 
-  # def fire_block(self, inputs, block_size, name=None):
-  def fire_block(self, inputs, out_channel):
-    # s1, e1, s3 = block_size
-    # inputs = self.conv2d(inputs, s1, 1, 1, relu=True)
-    # inputs_e1 = self.conv2d(inputs, e1, 1, 1, relu=True)
-    # inputs_s3 = self.conv2d(inputs, s3, 3, 1, relu=True)
-    # inputs = tf.concat([inputs_e1, inputs_s3], axis=-1, name='concat')
-    # return inputs
-    sfilter1x1 = self.sr * out_channel
-    efilter1x1 = (1 - self.pct33) * out_channel
-    efilter3x3 = self.pct33 * out_channel
-    out = self.conv2d(inputs, sfilter1x1, kernel_size=1, strides=1)
-    out_1 = self.conv2d(out, efilter1x1, kernel_size=1, strides=1)
-    out_2 = self.conv2d(out, efilter3x3, kernel_size=3, strides=1)
-    out = tf.concat([out_1, out_2], axis=-1)
-    return out
+      # 保证通道数目相同, 以及宽高数据相同, 这里只实现了保证通道数目相同
+      output_channel = inputs.shape[-1]
+      output_width = inputs.shape[-2]
+      if input_channel != output_channel or input_width != output_width:
+        # 这里的对于快速链接也需要调整宽高
+        short_cut = self.conv2d(
+          short_cut, out_channel=output_channel, kernel_size=1, strides=2,
+          relu=False
+        )
+
+      # todo: 实现在残差块之后, 添加 global_pooling->FC->ReLu->FC->Sigmoid,再实现
+      inputs = tf.nn.relu(tf.add(inputs, short_cut))
+      # 合并分支
+      return inputs
+
+  def senet_block(self, inputs):
+    short_cut_se = tf.identity(inputs)
+    out_channel = short_cut_se.shape[-1]
+
+    inputs_height, inputs_width = inputs.shape[1:3]
+    inputs = tf.layers.average_pooling2d(
+      inputs, (inputs_height, inputs_width), (inputs_height, inputs_width),
+      padding='same'
+    )
+
+    inputs = tf.layers.flatten(inputs)
+    inputs = tf.layers.dense(
+      inputs, units=out_channel // self.r,
+      activation='relu',
+      kernel_initializer=self.initializer,
+      kernel_regularizer=self.regularizer
+    )
+    inputs = tf.layers.dense(
+      inputs, units=out_channel,
+      activation='sigmoid',
+      kernel_initializer=self.initializer,
+      kernel_regularizer=self.regularizer
+    )
+    inputs = tf.expand_dims(inputs, axis=1)
+    inputs = tf.expand_dims(inputs, axis=2)
+
+    return tf.multiply(short_cut_se, inputs)
 
   def loss(self, predicts, labels):
     losses = tf.reduce_mean(
       tf.losses.sparse_softmax_cross_entropy(labels, predicts)
     )
-    # l2_reg = tf.losses.get_regularization_losses()
-    # losses += tf.add_n(l2_reg)
+    l2_reg = tf.losses.get_regularization_losses()
+    losses += tf.add_n(l2_reg)
     return losses
 
 
@@ -213,7 +173,8 @@ class Solver(object):
 
     # eval() 函数用来执行一个字符串表达式，并返回表达式的值。这里是执行网络
     self.net = eval(self.netname)(
-      is_training=self.is_training, keep_prob=self.keep_prob)
+      is_training=self.is_training, keep_prob=self.keep_prob
+    )
 
     # 前向计算网络
     self.predicts, self.softmax_out = self.net.forward(self.images)
@@ -280,8 +241,6 @@ class Solver(object):
       # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
       for step in range(train_steps):
         # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
-        if step % 20 == 0:
-          print('step{0}/total{1}'.format(step, train_steps))
         images, labels = sess.run(train_dataset)
         sess.run(self.train_op, feed_dict={self.images     : images,
                                            self.labels     : labels,
@@ -338,6 +297,7 @@ class Solver(object):
 
           print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
 
+        # 5000步保存下结果
         if step % 5000 == 0:
           saver.save(sess, self.model_name, global_step=step)
 
@@ -422,6 +382,7 @@ class CifarData(object):
       dataset = dataset.shuffle(buffer_size=cfg.NUM_IMAGES['train'])
       # 将数据集重复周期次, 这么多周期都用使用相同的数据
       dataset = dataset.repeat(num_epochs)
+
     # 把转换函数应用到数据集上
     # map映射函数, 并使用batch操作进行批提取
     dataset = dataset.apply(tf.contrib.data.map_and_batch(
@@ -443,27 +404,27 @@ class CifarData(object):
 
 
 # 网络入口 ######################################################################
-def SqueezeNetA(is_training=True, keep_prob=0.5):
-  # 没有short_cut
-  net = SqueezeNet(
-    squeezename='SqueezeNetA', is_training=is_training, keep_prob=keep_prob
-  )
+def SE_Resnet_20(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet20', is_training=is_training,
+              keep_prob=keep_prob)
   return net
 
 
-def SqueezeNetB(is_training=True, keep_prob=0.5):
-  # 有简单的short_cut
-  net = SqueezeNet(
-    squeezename='SqueezeNetB', is_training=is_training, keep_prob=keep_prob
-  )
+def SE_Resnet_32(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet32', is_training=is_training,
+              keep_prob=keep_prob)
   return net
 
 
-def SqueezeNetC(is_training=True, keep_prob=0.5):
-  # 有复杂的short_cut
-  net = SqueezeNet(
-    squeezename='SqueezeNetC', is_training=is_training, keep_prob=keep_prob
-  )
+def SE_Resnet_44(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet44', is_training=is_training,
+              keep_prob=keep_prob)
+  return net
+
+
+def SE_Resnet_56(is_training=True, keep_prob=0.5):
+  net = SeNet(resname='ResNet56', is_training=is_training,
+              keep_prob=keep_prob)
   return net
 
 
