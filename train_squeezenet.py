@@ -1,6 +1,7 @@
 import os
 
 import tensorflow as tf
+from tensorflow.python.keras.utils.generic_utils import Progbar
 
 import cfg
 
@@ -14,7 +15,7 @@ class SqueezeNet(object):
     self.squeezename = squeezename
     self.num_classes = num_classes
     self.short_cut_list = cfg.net_layers[squeezename]
-    self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
+    # self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
     self.initializer = tf.contrib.layers.xavier_initializer()
     self.model = squeezename[-1]
     self.is_training = is_training
@@ -49,9 +50,9 @@ class SqueezeNet(object):
         strides=(pool_height, pool_width), name='avepool10'
       )
       out = tf.layers.flatten(out, name='flatten')
+      out = tf.layers.dropout(out, rate=self.keep_prob, name='dropout')
       predicts = tf.layers.dense(
-        out, units=self.num_classes, kernel_initializer=self.initializer,
-        kernel_regularizer=self.regularizer, name='fc'
+        out, units=self.num_classes, kernel_initializer=self.initializer, name='fc'
       )
       softmax_out = tf.nn.softmax(predicts, name='output')
       return predicts, softmax_out
@@ -62,8 +63,7 @@ class SqueezeNet(object):
     with tf.name_scope(name):
       inputs = tf.layers.conv2d(
         inputs, filters=out_channel, kernel_size=kernel_size, strides=strides,
-        padding='same', kernel_initializer=self.initializer,
-        kernel_regularizer=self.regularizer
+        padding='same', kernel_initializer=self.initializer
       )
       inputs = tf.layers.batch_normalization(
         inputs, training=self.is_training
@@ -138,8 +138,8 @@ class SqueezeNet(object):
     losses = tf.reduce_mean(
       tf.losses.sparse_softmax_cross_entropy(labels, predicts)
     )
-    l2_reg = tf.losses.get_regularization_losses()
-    losses += tf.add_n(l2_reg)
+    # l2_reg = tf.losses.get_regularization_losses()
+    # losses += tf.add_n(l2_reg)
     return losses
 
 
@@ -286,6 +286,9 @@ class Solver(object):
           # 总体计算测试准确率
           sess.run(test_iterator.initializer)
 
+          # 测试集进度条
+          progbar = Progbar(target=test_steps)
+
           test_acc_count = 0
           test_total_accuracy = 0
           for test_step in range(test_steps):
@@ -304,6 +307,10 @@ class Solver(object):
                                            self.keep_prob  : 1.0})
             test_total_accuracy += test_acc
             test_acc_count += 1
+
+            # 更新进度条
+            progbar.update(test_steps)
+
           print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
 
         if step % 5000 == 0:

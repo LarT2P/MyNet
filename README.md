@@ -8,7 +8,6 @@
 
     * train_acc: 0.9909;
     * test_acc_from_testdataset: 0.9119
-    * evel_acc_from_alldataset: 0.9120
 
     * 'batch_size'   : 128,
     * 'image_size'   : (32, 32),
@@ -21,7 +20,6 @@
 
     * train_acc: 0.9882
     * test_acc_from_testdataset: 0.9288
-    * evel_acc_from_alldataset: 0.9291
 
     * 'batch_size'   : 128,
     * 'image_size'   : (32, 32),
@@ -41,7 +39,6 @@
         
     * train_acc: 
     * test_acc_from_testdataset: 
-    * evel_acc_from_alldataset: 
 
     * 'batch_size'   : 128,
     * 'image_size'   : (32, 32),
@@ -80,7 +77,6 @@
     ```
     * train_acc: 0.9894
     * test_acc_from_testdataset: 0.9176
-    * evel_acc_from_alldataset: 0.9177
     
     * 'net_name': 'DenseNet40_12'
     * 'batch_size': 64
@@ -99,7 +95,7 @@
         
     * train_acc: 0.9588
     * test_acc_from_testdataset: 0.9011
-    * evel_acc_from_alldataset: 0.9015
+    
     * 'net_name'     : 'SE_Resnet20',
     * 'batch_size'   : 128,
     * 'image_size'   : (32, 32),
