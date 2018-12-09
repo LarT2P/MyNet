@@ -3,8 +3,6 @@ import os
 import tensorflow as tf
 
 import cfg
-import math
-import sys
 
 os.environ['CUDA_VISIBLE_DEVICE'] = '0'
 
@@ -254,68 +252,64 @@ class Solver(object):
 
       acc_count = 0
       total_accuracy = 0
-      try:
-        # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
-        for step in range(train_steps):
-          # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
-          images, labels = sess.run(train_dataset)
-          sess.run(self.train_op, feed_dict={self.images     : images,
-                                             self.labels     : labels,
-                                             self.is_training: True,
-                                             self.keep_prob  : 0.5})
-          lr = sess.run(self.learning_rate)
+      # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
+      for step in range(train_steps):
+        # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
+        if step % 20 == 0:
+          print('step{0}/total{1}'.format(step, train_steps))
+        images, labels = sess.run(train_dataset)
+        sess.run(self.train_op, feed_dict={self.images     : images,
+                                           self.labels     : labels,
+                                           self.is_training: True,
+                                           self.keep_prob  : 0.5})
+        lr = sess.run(self.learning_rate)
 
-          # 定期针对这一个batch(step)计算显示一下准确率
-          if step % self.display_step == 0:
-            # 迭代一步, 就计算一下准确率
-            acc = sess.run(self.accuracy,
-                           feed_dict={self.images     : images,
-                                      self.labels     : labels,
-                                      self.is_training: True,
-                                      self.keep_prob  : 0.5})
-            total_accuracy += acc
-            acc_count += 1
-            loss = sess.run(self.total_loss,
-                            feed_dict={self.images     : images,
-                                       self.labels     : labels,
-                                       self.is_training: True,
-                                       self.keep_prob  : 0.5})
-            print('Iter step:%d learning rate:%.4f loss:%.4f accuracy:%.4f' %
-                  (step, lr, loss, total_accuracy / acc_count))
+        # 定期针对这一个batch(step)计算显示一下准确率
+        if step % self.display_step == 0:
+          # 迭代一步, 就计算一下准确率
+          acc = sess.run(self.accuracy,
+                         feed_dict={self.images     : images,
+                                    self.labels     : labels,
+                                    self.is_training: True,
+                                    self.keep_prob  : 0.5})
+          total_accuracy += acc
+          acc_count += 1
+          loss = sess.run(self.total_loss,
+                          feed_dict={self.images     : images,
+                                     self.labels     : labels,
+                                     self.is_training: True,
+                                     self.keep_prob  : 0.5})
+          print('Iter step:%d learning rate:%.4f loss:%.4f accuracy:%.4f' %
+                (step, lr, loss, total_accuracy / acc_count))
 
-          if step % self.predict_step == 0:
-            # 总体计算测试准确率
-            sess.run(test_iterator.initializer)
+        if step % self.predict_step == 0:
+          # 总体计算测试准确率
+          sess.run(test_iterator.initializer)
 
-            test_acc_count = 0
-            test_total_accuracy = 0
-            try:
-              for test_step in range(test_steps):
-                summary_str = sess.run(summary_op,
-                                       feed_dict={self.images     : images,
-                                                  self.labels     : labels,
-                                                  self.is_training: True,
-                                                  self.keep_prob  : 0.5})
-                summary_writer.add_summary(summary_str, test_step)
-                # 获取测试集
-                test_images, test_labels = sess.run(test_dataset)
-                test_acc = sess.run(self.accuracy,
-                                    feed_dict={self.images     : test_images,
-                                               self.labels     : test_labels,
-                                               self.is_training: False,
-                                               self.keep_prob  : 1.0})
-                test_total_accuracy += test_acc
-                test_acc_count += 1
+          test_acc_count = 0
+          test_total_accuracy = 0
+          for test_step in range(test_steps):
+            summary_str = sess.run(summary_op,
+                                   feed_dict={self.images     : images,
+                                              self.labels     : labels,
+                                              self.is_training: True,
+                                              self.keep_prob  : 0.5})
+            summary_writer.add_summary(summary_str, test_step)
+            # 获取测试集
+            test_images, test_labels = sess.run(test_dataset)
+            test_acc = sess.run(self.accuracy,
+                                feed_dict={self.images     : test_images,
+                                           self.labels     : test_labels,
+                                           self.is_training: False,
+                                           self.keep_prob  : 1.0})
+            test_total_accuracy += test_acc
+            test_acc_count += 1
+          print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
 
-            except tf.errors.OutOfRangeError:
-              print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
-              print('finish testing until the step!')
+        if step % 5000 == 0:
+          saver.save(sess, self.model_name, global_step=step)
 
-          # 5000步保存下结果
-          if step % 5000 == 0:
-            saver.save(sess, self.model_name, global_step=step)
-      except tf.errors.OutOfRangeError:
-        print("finish training !")
+      print("finish training !")
 
 
 # 获取数据并处理 #################################################################
@@ -439,7 +433,7 @@ def SqueezeNetB(is_training=True, keep_prob=0.5):
   return net
 
 
-def SqueezeNetB(is_training=True, keep_prob=0.5):
+def SqueezeNetC(is_training=True, keep_prob=0.5):
   # 有复杂的short_cut
   net = SqueezeNet(
     squeezename='SqueezeNetC', is_training=is_training, keep_prob=keep_prob

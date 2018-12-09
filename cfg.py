@@ -4,7 +4,7 @@ dataset_params = {
 }
 
 common_params = {
-  'net_name'     : 'SE_Resnet_20',
+  'net_name'     : 'SqueezeNetA',
   'batch_size'   : 128,
   'image_size'   : (32, 32),
   'learning_rate': 0.01,
