@@ -72,6 +72,7 @@ class SqueezeNet(object):
       inputs, filters=out_channel, kernel_size=kernel_size, strides=strides,
       padding='same', kernel_initializer=self.initializer,
       name='conv_' + str(self.conv_num))
+
     self.conv_num += 1
 
     # inputs = tf.layers.batch_normalization(
@@ -198,6 +199,9 @@ class Solver(object):
       tf.gfile.MakeDirs(self.log_dir)
 
     self.restore = cfg.common_params['restore']
+    self.test_steps = (10000 // cfg.common_params['batch_size']) + 1
+    self.train_steps = 50000 // cfg.common_params['batch_size'] * \
+                       cfg.common_params['num_epochs']
 
     self.construct_graph()
 
@@ -240,6 +244,34 @@ class Solver(object):
       tf.argmax(self.softmax_out, 1, output_type=tf.int32), self.labels)
     self.accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
+  def get_acc_test(self, sess, test_iterator, test_dataset):
+    # 总体计算测试准确率
+    sess.run(test_iterator.initializer)
+
+    # 测试集进度条
+    progbar_test = Progbar(target=self.test_steps)
+
+    test_acc_count = 0
+    test_total_accuracy = 0
+
+    for test_step in range(self.test_steps):
+      # 获取测试集
+      test_images, test_labels = sess.run(test_dataset)
+      test_acc = sess.run(self.accuracy,
+                          feed_dict={self.images     : test_images,
+                                     self.labels     : test_labels,
+                                     self.is_training: False,
+                                     self.keep_prob  : 1.0})
+      test_total_accuracy += test_acc
+      test_acc_count += 1
+
+      # 更新进度条
+      progbar_test.update(test_step + 1)
+
+    test_acc_final = test_total_accuracy / test_acc_count
+
+    return test_acc_final
+
   def solve(self):
     """
     训练
@@ -272,14 +304,6 @@ class Solver(object):
 
     with tf.Session(config=config) as sess:
       # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
-      step = 0
-      test_steps = (10000 // cfg.common_params['batch_size']) + 1
-
-      acc_count = 0
-      total_accuracy = 0
-      final_acc = 0
-      train_steps = 50000 // cfg.common_params['batch_size'] * \
-                    cfg.common_params['num_epochs']
 
       sess.run(init)
 
@@ -295,11 +319,17 @@ class Solver(object):
         step = int(input_checkpoint.split('/')[-1].split('-')[-1])
 
       # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
+
+      step = 0
+      acc_count = 0
+      total_accuracy = 0
+      final_acc = 0
+      test_acc_final = 0
       try:
         while True:
           # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
           if step % 20 == 0:
-            print('step{0}/total{1}'.format(step, train_steps))
+            print('step{0}/total{1}'.format(step, self.train_steps))
 
           images, labels = sess.run(train_dataset)
           sess.run(self.train_op, feed_dict={self.images     : images,
@@ -327,29 +357,9 @@ class Solver(object):
                   (step, lr, loss, total_accuracy / acc_count))
 
           if step % self.predict_step == 0:
-            # 总体计算测试准确率
-            sess.run(test_iterator.initializer)
-
-            # 测试集进度条
-            progbar_test = Progbar(target=test_steps)
-
-            test_acc_count = 0
-            test_total_accuracy = 0
-            for test_step in range(test_steps):
-              # 获取测试集
-              test_images, test_labels = sess.run(test_dataset)
-              test_acc = sess.run(self.accuracy,
-                                  feed_dict={self.images     : test_images,
-                                             self.labels     : test_labels,
-                                             self.is_training: False,
-                                             self.keep_prob  : 1.0})
-              test_total_accuracy += test_acc
-              test_acc_count += 1
-
-              # 更新进度条
-              progbar_test.update(test_step + 1)
-
-            test_acc_final = test_total_accuracy / test_acc_count
+            test_acc_final = self.get_acc_test(
+              sess=sess, test_iterator=test_iterator, test_dataset=test_dataset
+            )
             print('test acc:%.4f' % (test_acc_final))
 
             if test_acc_final > final_acc:
@@ -358,6 +368,15 @@ class Solver(object):
 
           step += 1
       except tf.errors.OutOfRangeError:
+        test_acc_final = self.get_acc_test(
+          sess=sess, test_iterator=test_iterator, test_dataset=test_dataset
+        )
+        print('test acc:%.4f' % (test_acc_final))
+
+        if test_acc_final > final_acc:
+          final_acc = test_acc_final
+          saver.save(sess, self.model_name, global_step=step)
+
         print("finish training !")
 
 

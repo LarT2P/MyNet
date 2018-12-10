@@ -10,9 +10,9 @@ common_params = {
   'learning_rate': 0.01,
   'moment'       : 0.9,
   'display_step' : 100,
-  'num_epochs'   : 100,
+  'num_epochs'   : 200,
   'predict_step' : 782,
-  'restore': True
+  'restore': False
 }
 
 graph_node = {
