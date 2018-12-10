@@ -197,6 +197,8 @@ class Solver(object):
     if not tf.gfile.Exists(self.log_dir):
       tf.gfile.MakeDirs(self.log_dir)
 
+    self.restore = cfg.common_params['restore']
+
     self.construct_graph()
 
   def construct_graph(self):
@@ -204,12 +206,10 @@ class Solver(object):
     self.global_step = tf.Variable(0, trainable=False)
     self.images = tf.placeholder(
       tf.float32, (None, self.height, self.width, 3), name='input')
-    self.labels = tf.placeholder(
-      tf.int32, None)
+    self.labels = tf.placeholder(tf.int32, None)
     self.is_training = tf.placeholder_with_default(
       False, None, name='is_training')
-    self.keep_prob = tf.placeholder(
-      tf.float32, None, name='keep_prob')
+    self.keep_prob = tf.placeholder(tf.float32, None, name='keep_prob')
 
     # eval() 函数用来执行一个字符串表达式，并返回表达式的值。这里是执行网络
     self.net = eval(self.netname)(
@@ -240,9 +240,6 @@ class Solver(object):
       tf.argmax(self.softmax_out, 1, output_type=tf.int32), self.labels)
     self.accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
-    tf.summary.scalar('loss', self.total_loss)
-    tf.summary.scalar('accuracy', self.accuracy)
-
   def solve(self):
     """
     训练
@@ -260,88 +257,108 @@ class Solver(object):
 
     # 存储变量到checkpoint文件中
     saver = tf.train.Saver(var_list=var_list)
-    config = tf.ConfigProto(allow_soft_placement=True)
-    config.gpu_options.allow_growth = True
     init = tf.global_variables_initializer()
 
-    summary_op = tf.summary.merge_all()
+    if self.restore:
+      model_folder = os.path.join(cfg.dataset_params['model_path'],
+                                  cfg.common_params['net_name'], 'ckpt')
+      checkpoint = tf.train.get_checkpoint_state(model_folder)
+      input_checkpoint = checkpoint.model_checkpoint_path
+      saver = tf.train.import_meta_graph(input_checkpoint + '.meta',
+                                         clear_devices=True)
+
+    config = tf.ConfigProto(allow_soft_placement=True)
+    config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-      test_steps = (10000 // cfg.common_params['batch_size']) + 1
-      train_steps = (50000 * cfg.common_params['num_epochs']
-                     // cfg.common_params['batch_size'] + 1)
-
       # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
-      sess.run(init)
-      summary_writer = tf.summary.FileWriter(self.log_dir, sess.graph)
+      step = 0
+      test_steps = (10000 // cfg.common_params['batch_size']) + 1
 
       acc_count = 0
       total_accuracy = 0
+      final_acc = 0
+      train_steps = 50000 // cfg.common_params['batch_size'] * \
+                    cfg.common_params['num_epochs']
+
+      sess.run(init)
+
+      # tf.train.saver.save()在保存check - point的同时也会保存Meta Graph。但是在恢复
+      # 图时，tf.train.saver.restore()只恢复Variable，如果要从MetaGraph恢复图，需要
+      # 使用import_meta_graph。这是其实为了方便用户，有时我们不需要从MetaGraph恢复的图，
+      # 而是需要在 python中构建神经网络图，并恢复对应的 Variable。
+      # tf.train.Saver()/saver.restore() 则能够完完整整保存和恢复神经网络的训练。
+      # Check-point分为两个文件保存Variable的二进制信息。ckpt文件保存了Variable的二进
+      # 制信息，index文件用于保存 ckpt 文件中对应 Variable 的偏移量信息。
+      if self.restore:
+        saver.restore(sess, input_checkpoint)
+        step = int(input_checkpoint.split('/')[-1].split('-')[-1])
+
       # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
-      for step in range(train_steps):
-        # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
-        if step % 20 == 0:
-          print('step{0}/total{1}'.format(step, train_steps))
-        images, labels = sess.run(train_dataset)
-        sess.run(self.train_op, feed_dict={self.images     : images,
-                                           self.labels     : labels,
-                                           self.is_training: True,
-                                           self.keep_prob  : 0.5})
-        lr = sess.run(self.learning_rate)
+      try:
+        while True:
+          # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率
+          if step % 20 == 0:
+            print('step{0}/total{1}'.format(step, train_steps))
 
-        # 定期针对这一个batch(step)计算显示一下准确率
-        if step % self.display_step == 0:
-          # 迭代一步, 就计算一下准确率
-          acc = sess.run(self.accuracy,
-                         feed_dict={self.images     : images,
-                                    self.labels     : labels,
-                                    self.is_training: True,
-                                    self.keep_prob  : 0.5})
-          total_accuracy += acc
-          acc_count += 1
-          loss = sess.run(self.total_loss,
-                          feed_dict={self.images     : images,
-                                     self.labels     : labels,
-                                     self.is_training: True,
-                                     self.keep_prob  : 0.5})
-          print('Iter step:%d learning rate:%.4f loss:%.4f accuracy:%.4f' %
-                (step, lr, loss, total_accuracy / acc_count))
+          images, labels = sess.run(train_dataset)
+          sess.run(self.train_op, feed_dict={self.images     : images,
+                                             self.labels     : labels,
+                                             self.is_training: True,
+                                             self.keep_prob  : 0.5})
+          lr = sess.run(self.learning_rate)
 
-        if step % self.predict_step == 0:
-          # 总体计算测试准确率
-          sess.run(test_iterator.initializer)
+          # 定期针对这一个batch(step)计算显示一下准确率
+          if step % self.display_step == 0:
+            # 迭代一步, 就计算一下准确率
+            acc = sess.run(self.accuracy,
+                           feed_dict={self.images     : images,
+                                      self.labels     : labels,
+                                      self.is_training: True,
+                                      self.keep_prob  : 0.5})
+            total_accuracy += acc
+            acc_count += 1
+            loss = sess.run(self.total_loss,
+                            feed_dict={self.images     : images,
+                                       self.labels     : labels,
+                                       self.is_training: True,
+                                       self.keep_prob  : 0.5})
+            print('Iter step:%d learning rate:%.4f loss:%.4f accuracy:%.4f' %
+                  (step, lr, loss, total_accuracy / acc_count))
 
-          # 测试集进度条
-          progbar_test = Progbar(target=test_steps)
+          if step % self.predict_step == 0:
+            # 总体计算测试准确率
+            sess.run(test_iterator.initializer)
 
-          test_acc_count = 0
-          test_total_accuracy = 0
-          for test_step in range(test_steps):
-            summary_str = sess.run(summary_op,
-                                   feed_dict={self.images     : images,
-                                              self.labels     : labels,
-                                              self.is_training: True,
-                                              self.keep_prob  : 0.5})
-            summary_writer.add_summary(summary_str, test_step)
-            # 获取测试集
-            test_images, test_labels = sess.run(test_dataset)
-            test_acc = sess.run(self.accuracy,
-                                feed_dict={self.images     : test_images,
-                                           self.labels     : test_labels,
-                                           self.is_training: False,
-                                           self.keep_prob  : 1.0})
-            test_total_accuracy += test_acc
-            test_acc_count += 1
+            # 测试集进度条
+            progbar_test = Progbar(target=test_steps)
 
-            # 更新进度条
-            progbar_test.update(test_step + 1)
+            test_acc_count = 0
+            test_total_accuracy = 0
+            for test_step in range(test_steps):
+              # 获取测试集
+              test_images, test_labels = sess.run(test_dataset)
+              test_acc = sess.run(self.accuracy,
+                                  feed_dict={self.images     : test_images,
+                                             self.labels     : test_labels,
+                                             self.is_training: False,
+                                             self.keep_prob  : 1.0})
+              test_total_accuracy += test_acc
+              test_acc_count += 1
 
-          print('test acc:%.4f' % (test_total_accuracy / test_acc_count))
+              # 更新进度条
+              progbar_test.update(test_step + 1)
 
-        if step % 5000 == 0:
-          saver.save(sess, self.model_name, global_step=step)
+            test_acc_final = test_total_accuracy / test_acc_count
+            print('test acc:%.4f' % (test_acc_final))
 
-      print("finish training !")
+            if test_acc_final > final_acc:
+              final_acc = test_acc_final
+              saver.save(sess, self.model_name, global_step=step)
+
+          step += 1
+      except tf.errors.OutOfRangeError:
+        print("finish training !")
 
 
 # 获取数据并处理 #################################################################
