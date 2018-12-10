@@ -1,3 +1,15 @@
+# todo:
+#  [ ] BN
+#  [ ] 调整Dropout
+#  [ ] 数据增强, 图像归一化,
+#  [ ] Zero Y启发式方法*
+#  [ ] 学习率预热*
+#  [ ] 无偏衰减*
+#  [ ] FP16
+#  [ ] 余弦学习率衰减
+#  [ ] 标签平滑
+#  [ ] 混合训练
+
 import os
 
 import tensorflow as tf
@@ -15,12 +27,13 @@ class SqueezeNet(object):
     self.squeezename = squeezename
     self.num_classes = num_classes
     self.short_cut_list = cfg.net_layers[squeezename]
-    # self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
+    self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
     self.initializer = tf.contrib.layers.xavier_initializer()
     self.model = squeezename[-1]
     self.is_training = is_training
     self.keep_prob = keep_prob
     self.conv_num = 1
+    self.has_batchnorm = cfg.common_params['has_batchnorm']
 
     # *******************************
     self.sr = 0.5
@@ -60,6 +73,7 @@ class SqueezeNet(object):
     out = tf.layers.dropout(out, rate=self.keep_prob, name='dropout')
     predicts = tf.layers.dense(
       out, units=self.num_classes, kernel_initializer=self.initializer,
+      kernel_regularizer=self.regularizer,
       name='fc'
     )
     softmax_out = tf.nn.softmax(predicts, name='output')
@@ -71,28 +85,19 @@ class SqueezeNet(object):
     inputs = tf.layers.conv2d(
       inputs, filters=out_channel, kernel_size=kernel_size, strides=strides,
       padding='same', kernel_initializer=self.initializer,
+      kernel_regularizer=self.regularizer,
       name='conv_' + str(self.conv_num))
 
     self.conv_num += 1
 
-    # inputs = tf.layers.batch_normalization(
-    #   inputs, training=self.is_training
-    # )
+    if self.has_batchnorm:
+      inputs = tf.layers.batch_normalization(
+        inputs, training=self.is_training
+      )
     inputs = tf.nn.relu(inputs) if relu else inputs
     return inputs
 
   def make_layers_A(self, inputs):
-    # s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    # e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-    # for i in range(2, 9):
-    #   inputs = self.fire_block(
-    #     inputs, [s1[i - 2], e1[i - 2], e1[i - 1]]
-    #   )
-    #   if i == 4 or i == 8:
-    #     inputs = tf.layers.max_pooling2d(
-    #       inputs, 3, 2, padding='same'
-    #     )
-    # return inputs
     max_pool_loc = [4, 8]
     pool_num = 1
     for i in range(2, 10):
@@ -108,23 +113,38 @@ class SqueezeNet(object):
     return inputs
 
   def make_layers_B(self, inputs):
-    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-
-    for i in range(2, 9):
-      if i - 1 in self.short_cut_list:
-        short_cut = tf.identity(inputs)
-      inputs = self.fire_block(
-        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
-      )
-      if i - 1 in self.short_cut_list:
-        inputs = tf.add(inputs, short_cut)
-
-      if i == 4 or i == 8:
+    max_pool_loc = [4, 8]
+    pool_num = 1
+    for i in range(2, 10):
+      # 这里的括号不可以去掉, 属于一个向下取整, 也就是说out_channel=[128, 128, 128*2,
+      # 128*2, 128*3, 128*3, 128*4, 128*4]
+      out_channel = self.base + self.incre * ((i - 2) // self.freq)
+      inputs = self.fire_block(inputs, out_channel)
+      if i in max_pool_loc:
         inputs = tf.layers.max_pooling2d(
-          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
-        )
+          inputs, pool_size=3, strides=2, padding='same',
+          name='maxpool_' + str(pool_num))
+        pool_num += 1
     return inputs
+
+  # def make_layers_B(self, inputs):
+  #   s1 = [16, 16, 32, 32, 48, 48, 64, 64]
+  #   e1 = [64, 64, 128, 128, 192, 192, 256, 256]
+  #
+  #   for i in range(2, 9):
+  #     if i - 1 in self.short_cut_list:
+  #       short_cut = tf.identity(inputs)
+  #     inputs = self.fire_block(
+  #       inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
+  #     )
+  #     if i - 1 in self.short_cut_list:
+  #       inputs = tf.add(inputs, short_cut)
+  #
+  #     if i == 4 or i == 8:
+  #       inputs = tf.layers.max_pooling2d(
+  #         inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
+  #       )
+  #   return inputs
 
   def make_layers_C(self, inputs):
     s1 = [16, 16, 32, 32, 48, 48, 64, 64]
@@ -174,8 +194,6 @@ class SqueezeNet(object):
 
 # 构造处理类 #####################################################################
 class Solver(object):
-  """docstring for Solver"""
-
   def __init__(self, dataset, common_params, dataset_params):
     super(Solver, self).__init__()
 
@@ -206,8 +224,22 @@ class Solver(object):
     self.construct_graph()
 
   def construct_graph(self):
+    ###################################
+    ########### Parameters ############
+    ###################################
+
     # 确定图上的各个关键变量
-    self.global_step = tf.Variable(0, trainable=False)
+    self.global_step = tf.Variable(0, trainable=False, name='global_step')
+    # 确定学习率变化, lr = lr * 0.1^(global_step/39062):
+    # global_step/39062=50000/128*100 相当于就是100个epoch下降一次
+    # 如果staircase=True，那就表明每39062次计算学习速率变化，更新原始学习速率，阶梯
+    # 下降如果是False，那就是每一步都更新学习速率
+    self.learning_rate = tf.train.exponential_decay(
+      self.learning_rate, self.global_step, 39062, 0.1, staircase=True)
+
+    ###############################################
+    ########### Defining place holders ############
+    ###############################################
     self.images = tf.placeholder(
       tf.float32, (None, self.height, self.width, 3), name='input')
     self.labels = tf.placeholder(tf.int32, None)
@@ -215,34 +247,42 @@ class Solver(object):
       False, None, name='is_training')
     self.keep_prob = tf.placeholder(tf.float32, None, name='keep_prob')
 
+    ##################################################
+    ########### Model + Loss + Accuracy ##############
+    ##################################################
+
+    # MODEL
     # eval() 函数用来执行一个字符串表达式，并返回表达式的值。这里是执行网络
     self.net = eval(self.netname)(
       is_training=self.is_training, keep_prob=self.keep_prob)
-
     # 前向计算网络
     self.predicts, self.softmax_out = self.net.forward(self.images)
-    # 计算网络损失
-    self.total_loss = self.net.loss(self.predicts, self.labels)
-    # 确定学习率变化, lr = lr * 0.1^(global_step/39062):
-    # global_step/39062=50000/128*100 相当于就是100个epoch下降一次
-    # 如果staircase=True，那就表明每39062次计算学习速率变化，更新原始学习速率，阶梯
-    # 下降如果是False，那就是每一步都更新学习速率
-    self.learning_rate = tf.train.exponential_decay(
-      self.learning_rate, self.global_step, 39062, 0.1, staircase=True)
+
+    # Define loss
+    with tf.name_scope('loss'):
+      self.total_loss = self.net.loss(self.predicts, self.labels)
+
+    # Accuracy
+    with tf.name_scope('accuracy'):
+      correct_pred = tf.equal(
+        tf.argmax(self.softmax_out, 1, output_type=tf.int32), self.labels)
+      self.accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+
+    #############################################
+    ########### training operation ##############
+    #############################################
+
     # 确定优化器
     optimizer = tf.train.MomentumOptimizer(self.learning_rate, self.moment)
 
-    # 从更新操作的图集合汇总取出全部变量
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    # 执行了update_ops后才会执行后面这个操作
-    with tf.control_dependencies(update_ops):
-      self.train_op = optimizer.minimize(
-        self.total_loss, global_step=self.global_step)
-
-    # 计算准确率
-    correct_pred = tf.equal(
-      tf.argmax(self.softmax_out, 1, output_type=tf.int32), self.labels)
-    self.accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    # gradient update.
+    with tf.name_scope('train'):
+      # 从更新操作的图集合汇总取出全部变量
+      update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+      # 执行了update_ops后才会执行后面这个操作
+      with tf.control_dependencies(update_ops):
+        self.train_op = optimizer.minimize(
+          self.total_loss, global_step=self.global_step)
 
   def get_acc_test(self, sess, test_iterator, test_dataset):
     # 总体计算测试准确率
@@ -273,9 +313,6 @@ class Solver(object):
     return test_acc_final
 
   def solve(self):
-    """
-    训练
-    """
     train_iterator = self.dataset['train'].make_one_shot_iterator()
     train_dataset = train_iterator.get_next()
     test_iterator = self.dataset['test'].make_initializable_iterator()
@@ -289,7 +326,6 @@ class Solver(object):
 
     # 存储变量到checkpoint文件中
     saver = tf.train.Saver(var_list=var_list)
-    init = tf.global_variables_initializer()
 
     if self.restore:
       model_folder = os.path.join(cfg.dataset_params['model_path'],
@@ -299,13 +335,21 @@ class Solver(object):
       saver = tf.train.import_meta_graph(input_checkpoint + '.meta',
                                          clear_devices=True)
 
+    ############################################
+    ############ Run the Session ###############
+    ############################################
     config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-      # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
+      step = 0
+      acc_count = 0
+      total_accuracy = 0
+      final_acc = 0
+      test_acc_final = 0
 
-      sess.run(init)
+      # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
+      sess.run(tf.global_variables_initializer())
 
       # tf.train.saver.save()在保存check - point的同时也会保存Meta Graph。但是在恢复
       # 图时，tf.train.saver.restore()只恢复Variable，如果要从MetaGraph恢复图，需要
@@ -320,11 +364,9 @@ class Solver(object):
 
       # 因为原本的数据集已经根据周期进行了重复, 所以顺着迭代执行即可
 
-      step = 0
-      acc_count = 0
-      total_accuracy = 0
-      final_acc = 0
-      test_acc_final = 0
+      ###################################################
+      ############ Training / Evaluation ###############
+      ###################################################
       try:
         while True:
           # 训练迭代一步, 取一步的数据, 训练一步, 计算一步的学习率

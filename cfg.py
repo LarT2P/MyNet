@@ -4,15 +4,16 @@ dataset_params = {
 }
 
 common_params = {
-  'net_name'     : 'SqueezeNetA',
+  'net_name'     : 'SqueezeNetB',
   'batch_size'   : 128,
   'image_size'   : (32, 32),
   'learning_rate': 0.01,
   'moment'       : 0.9,
   'display_step' : 100,
-  'num_epochs'   : 200,
+  'num_epochs'   : 300,
   'predict_step' : 782,
-  'restore': False
+  'restore'      : False,
+  'has_batchnorm': True
 }
 
 graph_node = {

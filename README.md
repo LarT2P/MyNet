@@ -106,16 +106,42 @@
     
 * squeezenet
 
-    * 'net_name': 'SqueezeNetA'
-    * 'batch_size': 128
-    * 'image_size': (32, 32)
-    * 'learning_rate': 0.01
-    * 'moment': 0.9
-    * 'display_step': 100, 
-    * 'num_epochs': 100
-    * 'predict_step': 782
-    * 'restore': True  
+    1. baseline: 
+       
+        * 'net_name'     : 'SqueezeNetA',
+        * 'batch_size'   : 128,
+        * 'image_size'   : (32, 32),
+        * 'learning_rate': 0.01,
+        * 'moment'       : 0.9,
+        * 'display_step' : 100,
+        * 'num_epochs'   : 200,
+        * 'predict_step' : 782,
+        * 'restore': False
+        
+        * train: 0.9029
+        * test: 0.8465
+        * 分析: 从训练集的准确率来看, 周期数目较少, 准确率较低, 可以尝试将周期数调高100个周期
+        
+    2. +BN
+    
+        * train: 0.9461
+        * test: 0.8473
+        * 分析: BN在一定程度上提升了训练集的准确率, 当然, 测试集也有些许提升
+    
+    3. => 'num_epochs'  : 300
       
+        * train: 0.9361
+        * test: 0.8514
+        * 分析: 相较于前面的1, 2而言, 测试集准确率有所提升
+        
+    4. +BN, num_epoch=300
+    
+        * train: 0.9640
+        * test: 0.8472
+        * 分析: 这里竟然加了BN后导致测试集下降了, 但是训练集反而是更高了, 这里应该是过拟合比较严重了
+        
+    5. 4+l2_regularizer+
+
 ---
 
 DneseNet在训练时十分消耗内存，这是由于算法实现不优带来的。当前的深度学习框架对 DenseNet 的密集连接没有很好的支持，所以只能借助于反复的拼接（Concatenation）操作，将之前层的输出与当前层的输出拼接在一起，然后传给下一层。对于大多数框架（如Torch和TensorFlow），每次拼接操作都会开辟新的内存来保存拼接后的特征。这样就导致一个 L 层的网络，要消耗相当于 L(L+1)/2 层网络的内存（第 l 层的输出在内存里被存了 (L-l+1) 份）。
