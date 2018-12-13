@@ -15,6 +15,7 @@ def input_fn_test(dataset_params):
   batch_size = cfg.NUM_IMAGES['validation']
 
   cifar_dataset = CifarData()
+  # 这里取回来的是测试集
   filenames = cifar_dataset.get_filenames(False, data_dir)
   dataset = tf.data.FixedLengthRecordDataset(filenames, cfg.RECORD_BYTES)
   dataset = dataset.prefetch(buffer_size=batch_size)
@@ -33,6 +34,22 @@ def cifar_dataset_test(dataset_params):
   return dataset
 
 
+def get_acc_test(sess, test_dataset):
+  # 获取测试集
+  test_images, test_labels = sess.run(test_dataset)
+
+  predict = sess.run(cfg.graph_node['output'],
+                     feed_dict={cfg.graph_node['input']      : test_images,
+                                cfg.graph_node['is_training']: False,
+                                cfg.graph_node['keep_prob']  : 1.0})
+  correct_pred = tf.equal(
+    tf.argmax(predict, 1, output_type=tf.int32), test_labels)
+  acc = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+
+  test_acc = sess.run(acc)
+  return test_acc
+
+
 def main(argv=None):
   model_folder = os.path.join(cfg.dataset_params['model_path'],
                               cfg.common_params['net_name'], 'ckpt')
@@ -43,30 +60,14 @@ def main(argv=None):
 
   dataset = cifar_dataset_test(cfg.dataset_params)
   test_iterator = dataset.make_one_shot_iterator()
-  test_Loader = test_iterator.get_next()
+  test_dataset = test_iterator.get_next()
   config = tf.ConfigProto(allow_soft_placement=True)
   config.gpu_options.allow_growth = True
   with tf.Session(config=config) as sess:
     saver.restore(sess, input_checkpoint)
-    images, labels = sess.run(test_Loader)
-
-    total_count = 0
-    count = 1
-    # 抽取数据集里的数据来进行评估
-    for i in range(0, len(images), 50):
-      image = images[i:i + 50, :, :, :]
-      predict = sess.run(cfg.graph_node['output'],
-                         feed_dict={cfg.graph_node['input']      : image,
-                                    cfg.graph_node['is_training']: False,
-                                    cfg.graph_node['keep_prob']  : 1.0})
-      correct_pred = tf.equal(
-        tf.argmax(predict, 1, output_type=tf.int32), labels[i:i + 50])
-      acc = tf.reduce_sum(tf.cast(correct_pred, tf.float32))
-      total_count += sess.run(acc)
-      accuracy = total_count / (count * 50)
-      print("test samples:%d,accuracy:%d/%d = %.4f " % (
-        count * 50, total_count, count * 50, accuracy))
-      count += 1
+    test_acc_final = get_acc_test(sess, test_dataset)
+    print('test acc:%.4f' % (test_acc_final))
+    print('对应的配置为:{}'.format(cfg.common_params))
 
 
 # 如果你的代码中的入口函数不叫main()，而是一个其他名字的函数，如test()，则你应该这样写入口

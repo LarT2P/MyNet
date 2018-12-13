@@ -3,17 +3,21 @@ dataset_params = {
   'model_path': './model/train'
 }
 
+# relu_style: relu6, leaky_relu, relu
 common_params = {
-  'net_name'     : 'SqueezeNetB',
+  'net_name'     : 'SqueezeNetC',
   'batch_size'   : 128,
   'image_size'   : (32, 32),
   'learning_rate': 0.01,
   'moment'       : 0.9,
   'display_step' : 100,
-  'num_epochs'   : 300,
+  'num_epochs'   : 800,
   'predict_step' : 782,
   'restore'      : False,
-  'has_batchnorm': True
+  'has_batchnorm': True,
+  'relu_style'   : 'leaky_relu',
+  'labels_smooth': True,
+  'labels_smooth_epsilon': 0.1
 }
 
 graph_node = {
@@ -101,8 +105,5 @@ net_layers = {
   'DenseNet100_24'  : [100, 12],
   'DenseNetBC100_12': [100, 12],
   'DenseNetBC250_24': [250, 24],
-  'DenseNetBC190_40': [190, 40],
-  'SqueezeNetA'     : [],
-  'SqueezeNetB'     : [2, 4, 6, 8],
-  'SqueezeNetC'     : [1, 2, 3, 4, 5, 6, 7, 8],
+  'DenseNetBC190_40': [190, 40]
 }

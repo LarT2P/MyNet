@@ -1,14 +1,18 @@
 # todo:
-#  [ ] BN
-#  [ ] 调整Dropout
-#  [ ] 数据增强, 图像归一化,
+#  [v] BN: 显著提高了训练集的准确率, 但是似乎有些过拟合
+#  [v] l2正则化
+#  [x] 尝试ReLU6
+#  [v] 尝试Leaky ReLU
+#  [v] 调整Dropout
+#  [x] 数据增强
 #  [ ] Zero Y启发式方法*
+#  [ ] 限制训练时间, 再合适的时间上停下来
 #  [ ] 学习率预热*
 #  [ ] 无偏衰减*
-#  [ ] FP16
-#  [ ] 余弦学习率衰减
-#  [ ] 标签平滑
-#  [ ] 混合训练
+#  [不会用] FP16
+#  [x] 余弦学习率衰减
+#  [x] 标签平滑
+#  [x] 混合训练
 
 import os
 
@@ -26,7 +30,6 @@ class SqueezeNet(object):
     super(SqueezeNet, self).__init__()
     self.squeezename = squeezename
     self.num_classes = num_classes
-    self.short_cut_list = cfg.net_layers[squeezename]
     self.regularizer = tf.contrib.layers.l2_regularizer(scale=5e-4)
     self.initializer = tf.contrib.layers.xavier_initializer()
     self.model = squeezename[-1]
@@ -34,6 +37,9 @@ class SqueezeNet(object):
     self.keep_prob = keep_prob
     self.conv_num = 1
     self.has_batchnorm = cfg.common_params['has_batchnorm']
+    self.relu_style = cfg.common_params['relu_style']
+    self.labels_smooth = cfg.common_params['labels_smooth']
+    self.labels_smooth_epsilon = cfg.common_params['labels_smooth_epsilon']
 
     # *******************************
     self.sr = 0.5
@@ -94,7 +100,16 @@ class SqueezeNet(object):
       inputs = tf.layers.batch_normalization(
         inputs, training=self.is_training
       )
-    inputs = tf.nn.relu(inputs) if relu else inputs
+
+    if self.relu_style == 'relu6':
+      inputs = tf.nn.relu6(inputs)
+    elif self.relu_style == 'leaky_relu':
+      inputs = tf.nn.leaky_relu(inputs)
+    elif self.relu_style == 'relu':
+      inputs = tf.nn.relu(inputs)
+    else:
+      print("the relu_style isn't defined.")
+
     return inputs
 
   def make_layers_A(self, inputs):
@@ -112,14 +127,48 @@ class SqueezeNet(object):
         pool_num += 1
     return inputs
 
+  # def make_layers_B(self, inputs):
+  #   max_pool_loc = [4, 8]
+  #   short_cuts = [3, 5, 7, 9]
+  #   pool_num = 1
+  #   for i in range(2, 10):
+  #
+  #     if i in short_cuts:
+  #       short_cut = tf.identity(inputs)
+  #
+  #     # 这里的括号不可以去掉, 属于一个向下取整, 也就是说out_channel=[128, 128, 128*2,
+  #     # 128*2, 128*3, 128*3, 128*4, 128*4]
+  #     out_channel = self.base + self.incre * ((i - 2) // self.freq)
+  #     inputs = self.fire_block(inputs, out_channel)
+  #
+  #     if i in short_cuts:
+  #       inputs = tf.add(inputs, short_cut)
+  #
+  #     if i in max_pool_loc:
+  #       inputs = tf.layers.max_pooling2d(
+  #         inputs, pool_size=3, strides=2, padding='same',
+  #         name='maxpool_' + str(pool_num))
+  #       pool_num += 1
+  #   return inputs
   def make_layers_B(self, inputs):
     max_pool_loc = [4, 8]
+    short_cuts = [2, 3, 4, 5, 6, 7, 8, 9]
     pool_num = 1
     for i in range(2, 10):
+
+      if i in short_cuts:
+        short_cut = tf.identity(inputs)
+
       # 这里的括号不可以去掉, 属于一个向下取整, 也就是说out_channel=[128, 128, 128*2,
       # 128*2, 128*3, 128*3, 128*4, 128*4]
       out_channel = self.base + self.incre * ((i - 2) // self.freq)
       inputs = self.fire_block(inputs, out_channel)
+
+      if i in short_cuts:
+        if inputs.shape[-1] != short_cut.shape[-1]:
+          short_cut = self.conv2d(short_cut, inputs.shape[-1], 1, 1, False)
+        inputs = tf.add(inputs, short_cut)
+
       if i in max_pool_loc:
         inputs = tf.layers.max_pooling2d(
           inputs, pool_size=3, strides=2, padding='same',
@@ -127,53 +176,33 @@ class SqueezeNet(object):
         pool_num += 1
     return inputs
 
-  # def make_layers_B(self, inputs):
-  #   s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-  #   e1 = [64, 64, 128, 128, 192, 192, 256, 256]
-  #
-  #   for i in range(2, 9):
-  #     if i - 1 in self.short_cut_list:
-  #       short_cut = tf.identity(inputs)
-  #     inputs = self.fire_block(
-  #       inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
-  #     )
-  #     if i - 1 in self.short_cut_list:
-  #       inputs = tf.add(inputs, short_cut)
-  #
-  #     if i == 4 or i == 8:
-  #       inputs = tf.layers.max_pooling2d(
-  #         inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
-  #       )
-  #   return inputs
-
   def make_layers_C(self, inputs):
-    s1 = [16, 16, 32, 32, 48, 48, 64, 64]
-    e1 = [64, 64, 128, 128, 192, 192, 256, 256]
+    max_pool_loc = [4, 8]
+    short_cuts = [2, 3, 4, 5, 6, 7, 8, 9]
+    pool_num = 1
+    for i in range(2, 10):
 
-    for i in range(2, 9):
-      if i - 1 in self.short_cut_list:
+      if i in short_cuts:
         short_cut = tf.identity(inputs)
-      inputs = self.fire_block(
-        inputs, [s1[i - 2], e1[i - 2], e1[i - 1]], name='fire_{}'.format(i)
-      )
-      if i - 1 in self.short_cut_list:
+
+      # 这里的括号不可以去掉, 属于一个向下取整, 也就是说out_channel=[128, 128, 128*2,
+      # 128*2, 128*3, 128*3, 128*4, 128*4]
+      out_channel = self.base + self.incre * ((i - 2) // self.freq)
+      inputs = self.fire_block(inputs, out_channel)
+
+      if i in short_cuts:
+        if inputs.shape[-1] != short_cut.shape[-1]:
+          short_cut = self.conv2d(short_cut, inputs.shape[-1], 1, 1, False)
         inputs = tf.add(inputs, short_cut)
 
-      if i == 4 or i == 8:
+      if i in max_pool_loc:
         inputs = tf.layers.max_pooling2d(
-          inputs, 3, 2, padding='same', name='maxpool_{}'.format(i)
-        )
-
+          inputs, pool_size=3, strides=2, padding='same',
+          name='maxpool_' + str(pool_num))
+        pool_num += 1
     return inputs
 
-  # def fire_block(self, inputs, block_size, name=None):
   def fire_block(self, inputs, out_channel):
-    # s1, e1, s3 = block_size
-    # inputs = self.conv2d(inputs, s1, 1, 1, relu=True)
-    # inputs_e1 = self.conv2d(inputs, e1, 1, 1, relu=True)
-    # inputs_s3 = self.conv2d(inputs, s3, 3, 1, relu=True)
-    # inputs = tf.concat([inputs_e1, inputs_s3], axis=-1, name='concat')
-    # return inputs
     sfilter1x1 = self.sr * out_channel
     efilter1x1 = (1 - self.pct33) * out_channel
     efilter3x3 = self.pct33 * out_channel
@@ -184,11 +213,19 @@ class SqueezeNet(object):
     return out
 
   def loss(self, predicts, labels):
-    losses = tf.reduce_mean(
-      tf.losses.sparse_softmax_cross_entropy(labels, predicts)
-    )
-    # l2_reg = tf.losses.get_regularization_losses()
-    # losses += tf.add_n(l2_reg)
+    if self.labels_smooth and self.labels_smooth_epsilon:
+      labels = tf.one_hot(labels, predicts.shape[-1])
+      losses = tf.reduce_mean(
+        tf.losses.softmax_cross_entropy(
+          labels, predicts, label_smoothing=self.labels_smooth_epsilon
+        )
+      )
+    else:
+      losses = tf.reduce_mean(
+        tf.losses.sparse_softmax_cross_entropy(labels, predicts)
+      )
+    l2_reg = tf.losses.get_regularization_losses()
+    losses += tf.add_n(l2_reg)
     return losses
 
 
@@ -218,8 +255,8 @@ class Solver(object):
 
     self.restore = cfg.common_params['restore']
     self.test_steps = (10000 // cfg.common_params['batch_size']) + 1
-    self.train_steps = 50000 // cfg.common_params['batch_size'] * \
-                       cfg.common_params['num_epochs']
+    self.train_steps = int(50000 / cfg.common_params['batch_size'] * \
+                           cfg.common_params['num_epochs'])
 
     self.construct_graph()
 
@@ -234,8 +271,10 @@ class Solver(object):
     # global_step/39062=50000/128*100 相当于就是100个epoch下降一次
     # 如果staircase=True，那就表明每39062次计算学习速率变化，更新原始学习速率，阶梯
     # 下降如果是False，那就是每一步都更新学习速率
-    self.learning_rate = tf.train.exponential_decay(
-      self.learning_rate, self.global_step, 39062, 0.1, staircase=True)
+    # self.learning_rate = tf.train.exponential_decay(
+    #   self.learning_rate, self.global_step, 39062, 0.1, staircase=True)
+    self.learning_rate = tf.train.cosine_decay(
+      self.learning_rate, self.global_step, 39062)
 
     ###############################################
     ########### Defining place holders ############
@@ -346,6 +385,7 @@ class Solver(object):
       acc_count = 0
       total_accuracy = 0
       final_acc = 0
+      final_train_acc = 0
       test_acc_final = 0
 
       # sess.run 并没有计算整个图，只是计算了与想要fetch的值相关的部分
@@ -374,6 +414,7 @@ class Solver(object):
             print('step{0}/total{1}'.format(step, self.train_steps))
 
           images, labels = sess.run(train_dataset)
+          # labels 为(1x128)的向量
           sess.run(self.train_op, feed_dict={self.images     : images,
                                              self.labels     : labels,
                                              self.is_training: True,
@@ -405,7 +446,10 @@ class Solver(object):
             print('test acc:%.4f' % (test_acc_final))
 
             if test_acc_final > final_acc:
+              # 记录测试集
               final_acc = test_acc_final
+              # 记录训练集
+              final_train_acc = (total_accuracy / acc_count)
               saver.save(sess, self.model_name, global_step=step)
 
           step += 1
@@ -416,10 +460,15 @@ class Solver(object):
         print('test acc:%.4f' % (test_acc_final))
 
         if test_acc_final > final_acc:
+          # 记录测试集
           final_acc = test_acc_final
+          # 记录训练集
+          final_train_acc = (total_accuracy / acc_count)
           saver.save(sess, self.model_name, global_step=step)
 
         print("finish training !")
+        print("best test_acc:{0}&train_acc:{1}".format(
+          final_acc, final_train_acc))
 
 
 # 获取数据并处理 #################################################################
@@ -473,6 +522,13 @@ class CifarData(object):
 
       # 1/2的概率随机左右翻转
       image = tf.image.random_flip_left_right(image)
+
+      # # 随机设置图片的亮度
+      # image = tf.image.random_brightness(image, max_delta=30)
+      # # 随机设置图片的色度
+      # image = tf.image.random_hue(image, max_delta=0.3)
+      # # 随机设置图片的饱和度
+      # image = tf.image.random_saturation(image, lower=0.2, upper=1.8)
 
     # 标准化, 零均值, 单位方差, 输出大小和输入一样
     image = tf.image.per_image_standardization(image)
@@ -555,6 +611,7 @@ def main(argv=None):
     # 确定各个采纳数, 学习率, 动量, 批大小, 图形大小, 特定的步数, 构建图
     solver = Solver(dataset, cfg.common_params, cfg.dataset_params)
     solver.solve()
+    print(cfg.common_params)
   else:
     print('undefined net_name...')
 
